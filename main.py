@@ -8,11 +8,13 @@ import glob
 import os
 from sklearn.feature_extraction.text import TfidfVectorizer
 import pickle
+from tqdm import tqdm
 
 # Initialize NLTK's resources and download required data
 nltk.download('punkt')
 nltk.download('stopwords')
 nltk.download('wordnet')
+
 
 # Function to preprocess the documents
 def preprocess_text(text):
@@ -48,8 +50,21 @@ def extract_text_from_pdf(file_path):
 def build_tfidf_index(directory_path):
     # Get all PDF file paths in the directory
     file_paths = glob.glob(os.path.join(directory_path, '*.pdf'))
+
+    # Initialize the progress bar
+    progress_bar = tqdm(total=len(file_paths), desc='Building Index')
+
     # Preprocess and extract text from PDFs
-    preprocessed_texts = [preprocess_text(extract_text_from_pdf(file_path)) for file_path in file_paths]
+    preprocessed_texts = []
+    for file_path in file_paths:
+        text = preprocess_text(extract_text_from_pdf(file_path))
+        preprocessed_texts.append(text)
+        progress_bar.set_postfix(file=os.path.basename(file_path))
+        progress_bar.update(1)
+
+    # Close the progress bar
+    progress_bar.close()
+
     # Initialize the TF-IDF vectorizer
     vectorizer = TfidfVectorizer()
     # Fit the vectorizer with the preprocessed texts
@@ -78,6 +93,7 @@ def save_as_pickle(data, file_path):
     except Exception as e:
         print(f"Error saving data as pickle: {str(e)}")
 
+
 # Function to load data from pickle
 def load_from_pickle(file_path):
     try:
@@ -89,14 +105,11 @@ def load_from_pickle(file_path):
         print(f"Error loading data from pickle: {str(e)}")
         return None
 
-
-directory_path = 'docs'
 def query_tfidf_index(query, index_data, top_k=5):
     tfidf_matrix = index_data['tfidf_matrix']
     vectorizer = index_data['vectorizer']
     file_paths = index_data['file_paths']
     document_titles = index_data['document_titles']
-
     print(f"TF-IDF matrix shape: {tfidf_matrix.shape}")
     print(f"Vectorizer vocabulary size: {len(vectorizer.vocabulary_)}")
     print(f"Number of file paths: {len(file_paths)}")
@@ -118,14 +131,11 @@ def query_tfidf_index(query, index_data, top_k=5):
 
     return relevance_scores, top_paths, top_titles
 
-
-
 def main():
     parser = argparse.ArgumentParser(description='PDF Search Engine')
     parser.add_argument('--index', type=str, default='index_data.pkl', help='Path to the index file (default: index_data.pkl)')
     parser.add_argument('--docs', type=str, default='docs', help='Path to the directory containing PDF documents (default: docs)')
     parser.add_argument('--update-index', action='store_true', help='Update the index if it already exists')
-
     args = parser.parse_args()
 
     index_path = args.index
@@ -164,7 +174,6 @@ def main():
             print("Relevance Score:", score)
             print("Path:", path)
             print("Title:", title)
-
 
 if __name__ == '__main__':
     main()
