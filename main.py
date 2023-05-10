@@ -44,31 +44,6 @@ def extract_text_from_pdf(file_path):
         print(f"Error extracting text from {file_path}: {str(e)}")
         return ''
 
-# Function to create a synonyms dictionary for all unique words in PDFs
-def create_synonyms_dictionary(directory):
-    synonyms_dict = {}
-
-    files = glob.glob(os.path.join(directory, '*.pdf'))
-
-    for file_path in files:
-        text = extract_text_from_pdf(file_path)
-        tokens = word_tokenize(text.lower())
-        unique_words = set(tokens)
-
-        for word in unique_words:
-            synonyms = set()
-            for synset in wordnet.synsets(word):
-                for lemma in synset.lemmas():
-                    synonym = lemma.name().replace('_', ' ')
-                    if synonym != word:
-                        synonyms.add(synonym)
-
-            if word in synonyms_dict:
-                synonyms_dict[word].extend(list(synonyms))
-            else:
-                synonyms_dict[word] = list(synonyms)
-
-    return synonyms_dict
 
 def build_tfidf_index(directory_path):
     # Get all PDF file paths in the directory
@@ -89,7 +64,6 @@ def build_tfidf_index(directory_path):
         'vectorizer': vectorizer,
         'file_paths': file_paths,
         'document_titles': document_titles,
-        "synonyms_dict": create_synonyms_dictionary(directory_path)
     }
 
     return index_data
@@ -117,36 +91,11 @@ def load_from_pickle(file_path):
 
 
 directory_path = 'docs'
-
-# # Build the TF-IDF index
-# index_data = build_tfidf_index(directory_path)
-#
-# # Save the TF-IDF matrix and vectorizer
-# save_as_pickle(index_data, 'index_data.pkl')
-#
-# # Load the index data
-# index_data = load_from_pickle('index_data.pkl')
-#
-
-
-# Function to expand the query using synonyms
-def expand_query_with_synonyms(query, synonyms_dict):
-    query_words = word_tokenize(query.lower())
-    expanded_query = []
-    for word in query_words:
-        expanded_query.append(word)
-        if word in synonyms_dict:
-            expanded_query.extend(synonyms_dict[word])
-    expanded_query = ' '.join(expanded_query)
-    return expanded_query
-
-
 def query_tfidf_index(query, index_data, top_k=5):
     tfidf_matrix = index_data['tfidf_matrix']
     vectorizer = index_data['vectorizer']
     file_paths = index_data['file_paths']
     document_titles = index_data['document_titles']
-    synonyms_dict = index_data['synonyms_dict']
 
     print(f"TF-IDF matrix shape: {tfidf_matrix.shape}")
     print(f"Vectorizer vocabulary size: {len(vectorizer.vocabulary_)}")
@@ -154,8 +103,7 @@ def query_tfidf_index(query, index_data, top_k=5):
     print(f"Number of document titles: {len(document_titles)}")
 
     # Preprocess the query and expand it with synonyms
-    preprocessed_query = preprocess_text(expand_query_with_synonyms(query, synonyms_dict))
-    # preprocessed_query = preprocess_text(query)
+    preprocessed_query = preprocess_text(query)
 
     # Transform the query into a TF-IDF vector
     query_vector = vectorizer.transform([preprocessed_query])
