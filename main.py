@@ -15,36 +15,24 @@ from multiprocessing import Pool, cpu_count
 import logging
 from pdfminer.high_level import extract_text
 
-
-
 from gensim.models import Doc2Vec
 from gensim.models.doc2vec import TaggedDocument
 
-# Download required NLTK datasets
-# nltk.download('punkt')
-# nltk.download('stopwords')
-# nltk.download('wordnet')
-# nltk.download('averaged_perceptron_tagger')
-
+PERCENTAGE_THRESHOLD = 0.3
+TOP_DOCUMENTS = 5
 
 class PDFProcessor:
     """Handles PDF extraction and text preprocessing."""
 
+    @staticmethod
     def extract_text_by_page(file_path):
         """Extracts text content page by page from a PDF file."""
         texts = []
         try:
-            # Using pdfminer's extract_text which extracts text from entire document
-            # Splitting by page can be done by processing the PDF in a more granular way
             full_text = extract_text(file_path).replace("\n", " ")
-            # Assuming each page ends with a form feed character '\f'
-            texts = full_text.split('\f')
-            # Optionally, strip each page's text to remove unwanted leading/trailing whitespace
-            texts = [text.strip() for text in texts if text.strip() != '']
-
+            texts = [text.strip() for text in full_text.split('\f') if text.strip() != '']
         except Exception as e:
             logging.error(f"Error extracting text from {file_path}: {e}")
-
         return texts
 
     @staticmethod
@@ -53,7 +41,6 @@ class PDFProcessor:
         tokens = [token.lower() for token in word_tokenize(text) if token.isalpha()]
         stop_words = set(stopwords.words('english'))
         tokens = [token for token in tokens if token not in stop_words]
-
         lemmatizer = WordNetLemmatizer()
         pos_tags = nltk.pos_tag(tokens)
         tokens = [lemmatizer.lemmatize(token, PDFProcessor._get_wordnet_pos(pos_tag)) for token, pos_tag in pos_tags]
@@ -75,7 +62,7 @@ class Doc2VecProcessor:
     """Handles Doc2Vec related functionalities."""
 
     @staticmethod
-    def train_doc2vec_model(docs, vector_size=50, window=5, min_count=2, workers=4, epochs=100):
+    def train_doc2vec_model(docs, vector_size=50, window=5, min_count=2, workers=4, epochs=50):
         """Train a Doc2Vec model with the provided documents."""
         tagged_data = [TaggedDocument(words=word_tokenize(_d.lower()), tags=[str(i)]) for i, _d in enumerate(docs)]
         model = Doc2Vec(vector_size=vector_size, window=window, min_count=min_count, workers=workers)
@@ -105,7 +92,7 @@ class IndexBuilder:
         file_paths = glob.glob(os.path.join(directory_path, '*.pdf'))
 
         with Pool(cpu_count()) as pool:
-            processed_pages = [page for doc in tqdm(pool.imap_unordered(self._process_file, file_paths), total=len(file_paths)) for page in doc]
+            processed_pages = [page for doc in tqdm(pool.imap(self._process_file, file_paths), total=len(file_paths)) for page in doc]
 
         vectorizer = TfidfVectorizer()
         tfidf_matrix = vectorizer.fit_transform(processed_pages)
@@ -154,48 +141,100 @@ class SearchEngine:
         else:
             query_vector = self.data['vectorizer'].transform([preprocessed_query])
             similarities = cosine_similarity(self.data['tfidf_matrix'], query_vector).flatten()
-            print(self.data['tfidf_matrix'])
-        print(similarities)
+
         top_indices = similarities.argsort()[:-top_k - 1:-1]
-        print(top_indices)
         scores = similarities[top_indices]
         paths = [(self.data['document_pages'][index][0], self.data['document_pages'][index][1]) for index in top_indices]
 
-        return scores, paths
+        # Calculate total number of pages for each document
+        total_pages_per_doc = {}
+        for doc, page in self.data['document_pages']:
+            total_pages_per_doc[doc] = total_pages_per_doc.get(doc, 0) + 1
 
+        # Aggregate the similarity scores for each document
+        doc_similarity_aggregate = {}
+        for index in similarities.argsort()[:-int(PERCENTAGE_THRESHOLD * len(similarities)) - 1:-1]:
+            doc_path = self.data['document_pages'][index][0]
+            # Aggregate the similarity score for the document
+            doc_similarity_aggregate[doc_path] = doc_similarity_aggregate.get(doc_path, 0) + similarities[index]
+
+        # Normalize the similarity score aggregate by total number of pages
+        normalized_similarity = {}
+        for doc, aggregate_score in doc_similarity_aggregate.items():
+            normalized_similarity[doc] = aggregate_score / total_pages_per_doc[doc]
+
+        # Sort documents by normalized similarity
+        sorted_docs = sorted(normalized_similarity.items(), key=lambda kv: kv[1], reverse=True)
+
+        return paths, scores, sorted_docs[:TOP_DOCUMENTS]
+
+
+def save_index(index_file, data):
+    """Save index data to a file."""
+    with open(index_file, 'wb') as f:
+        pickle.dump(data, f)
+
+
+def load_index(index_file):
+    """Load index data from a file."""
+    with open(index_file, 'rb') as f:
+        return pickle.load(f)
+
+
+def get_multiline_input(prompt, end_keyword="END"):
+    """Get multiline input from the user until the end keyword is entered."""
+    print(prompt, f"(Type '{end_keyword}' on a new line to finish)")
+    lines = []
+    while True:
+        try:
+            line = input()
+            if line.strip().upper() == end_keyword:
+                break
+            lines.append(line)
+        except EOFError:  # This handles Ctrl+D
+            break
+    return '\n'.join(lines)
 
 def main():
-    """Main function for the command-line interface of the PDF search engine."""
-    # Argparse setup
-    parser = argparse.ArgumentParser(description='PDF Search Engine')
+    parser = argparse.ArgumentParser(description="Build an index and search PDFs.")
     parser.add_argument('--index', type=str, default='index_data.pkl', help='Path to the index file.')
     parser.add_argument('--docs', type=str, default='docs', help='Path to the directory containing PDF documents.')
     parser.add_argument('--update-index', action='store_true', help='Update the index if it already exists.')
-    parser.add_argument('--mode', type=str, choices=['tfidf', 'lsi', 'doc2vec'], default='tfidf', help='The indexing and search mode.')
-
+    parser.add_argument('--mode', type=str, choices=['tfidf', 'lsi', 'doc2vec'], default='tfidf',
+                        help='The indexing and search mode.')
     args = parser.parse_args()
 
-    # Create or load index data
-    if not args.update_index and os.path.exists(args.index):
-        with open(args.index, 'rb') as file:
-            index_data = pickle.load(file)
+    # Check if index file exists
+    if os.path.exists(args.index) and not args.update_index:
+        print("Loading existing index...")
+        index_data = load_index(args.index)
     else:
-        index_builder = IndexBuilder(args.mode)
-        index_data = index_builder.build(args.docs)
-
-        with open(args.index, 'wb') as file:
-            pickle.dump(index_data, file)
+        print("Building new index...")
+        indexer = IndexBuilder(args.mode)
+        index_data = indexer.build(args.docs)
+        save_index(args.index, index_data)
+        print(f"Index saved to {args.index}")
 
     search_engine = SearchEngine(index_data, args.mode)
+
     while True:
-        text = input("Enter your query: ").strip()
-        if not text:
+        query = get_multiline_input("Enter your search query")
+
+        if not query.strip():  # If the user just presses enter without any input
+            print("Empty query, please try again or type 'exit' to stop.")
+            continue
+
+        if query.strip().lower() == 'exit':
             break
 
-        scores, paths = search_engine.query(text)
-        for score, (doc_path, page_num) in zip(scores, paths):
-            print(f"Document: {doc_path}, Page: {page_num}, Similarity Score: {score:.4f}")
+        results, scores, sorted_docs = search_engine.query(query)
+        print("Top pages with highest similarity score:")
+        for i, (path, page) in enumerate(results):
+            print(f"Document: {path}, Page: {page + 1}, Score: {scores[i]:.4f}")
 
+        print("Top 5 relevant documents:")
+        for doc, count in sorted_docs:
+            print(f"Document: {doc}, Cumulative Score: {count}")
 
 if __name__ == "__main__":
     main()
