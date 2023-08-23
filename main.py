@@ -92,14 +92,19 @@ class IndexBuilder:
         file_paths = glob.glob(os.path.join(directory_path, '*.pdf'))
 
         with Pool(cpu_count()) as pool:
-            processed_pages = [page for doc in tqdm(pool.imap(self._process_file, file_paths), total=len(file_paths)) for page in doc]
+            # process files in parallel and extract text by pages
+            processed_pages_data = list(tqdm(pool.imap(self._process_file, file_paths), total=len(file_paths)))
+
+        # Flattening the processed_pages_data and getting document_pages info
+        processed_pages = [page for doc in processed_pages_data for page in doc]
+        document_pages = [(fp, idx) for fp, doc in zip(file_paths, processed_pages_data) for idx in range(len(doc))]
 
         vectorizer = TfidfVectorizer()
         tfidf_matrix = vectorizer.fit_transform(processed_pages)
 
         data = {
             'vectorizer': vectorizer,
-            'document_pages': [(fp, idx) for fp in file_paths for idx in range(len(PDFProcessor.extract_text_by_page(fp)))],
+            'document_pages': document_pages
         }
 
         if self.mode == "lsi":
