@@ -1,3 +1,4 @@
+
 import os
 import glob
 import pickle
@@ -18,7 +19,7 @@ from pdfminer.high_level import extract_text
 from gensim.models import Doc2Vec
 from gensim.models.doc2vec import TaggedDocument
 
-PERCENTAGE_THRESHOLD = 0.3
+PERCENTAGE_THRESHOLD = 0.1
 TOP_DOCUMENTS = 5
 
 class PDFProcessor:
@@ -30,7 +31,7 @@ class PDFProcessor:
         texts = []
         try:
             full_text = extract_text(file_path).replace("\n", " ")
-            texts = [text.strip() for text in full_text.split('\f') if text.strip() != '']
+            texts = [text for text in full_text.split('\f')]
         except Exception as e:
             logging.error(f"Error extracting text from {file_path}: {e}")
         return texts
