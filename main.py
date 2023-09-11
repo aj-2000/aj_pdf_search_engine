@@ -23,7 +23,24 @@ PERCENTAGE_THRESHOLD = 0.1
 TOP_DOCUMENTS = 5
 
 class PDFProcessor:
+
     """Handles PDF extraction and text preprocessing."""
+
+    def _process_file(self, file_path):
+        """Process a single file by extracting and preprocessing its text page by page."""
+        pages = PDFProcessor.extract_text_by_page(file_path)
+        processed_subpages = []
+
+        for page in pages:
+            # Split each page into 5 equal sections
+            num_chars = len(page)
+            section_size = num_chars // 5
+            sections = [page[i:i + section_size] for i in range(0, num_chars, section_size)]
+
+            # Preprocess each section
+            processed_subpages.extend([PDFProcessor.preprocess(section) for section in sections])
+
+        return processed_subpages
 
     @staticmethod
     def extract_text_by_page(file_path):
@@ -88,17 +105,25 @@ class IndexBuilder:
         pages = PDFProcessor.extract_text_by_page(file_path)
         return [PDFProcessor.preprocess(page) for page in pages]
 
-    def build(self, directory_path):
+    def build(self, directory_path, batch_size=1000):
         """Builds the index from a given directory of PDF files page by page."""
         file_paths = glob.glob(os.path.join(directory_path, '*.pdf'))
 
-        with Pool(cpu_count()) as pool:
-            # process files in parallel and extract text by pages
-            processed_pages_data = list(tqdm(pool.imap(self._process_file, file_paths), total=len(file_paths)))
+        # Create lists to store processed data
+        processed_pages = []
+        document_pages = []
 
-        # Flattening the processed_pages_data and getting document_pages info
-        processed_pages = [page for doc in processed_pages_data for page in doc]
-        document_pages = [(fp, idx) for fp, doc in zip(file_paths, processed_pages_data) for idx in range(len(doc))]
+        # Process files in chunks (batches)
+        for i in range(0, len(file_paths), batch_size):
+            batch_paths = file_paths[i: i + batch_size]
+            with Pool(cpu_count()) as pool:
+                # Process a batch of files in parallel and extract text by pages
+                processed_pages_data = list(tqdm(pool.imap(self._process_file, batch_paths), total=len(batch_paths)))
+
+            # Update the lists with processed data from the current batch
+            processed_pages.extend([page for doc in processed_pages_data for page in doc])
+            document_pages.extend(
+                [(fp, idx) for fp, doc in zip(batch_paths, processed_pages_data) for idx in range(len(doc))])
 
         vectorizer = TfidfVectorizer()
         tfidf_matrix = vectorizer.fit_transform(processed_pages)
