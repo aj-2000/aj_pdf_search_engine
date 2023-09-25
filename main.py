@@ -26,22 +26,6 @@ class PDFProcessor:
 
     """Handles PDF extraction and text preprocessing."""
 
-    def _process_file(self, file_path):
-        """Process a single file by extracting and preprocessing its text page by page."""
-        pages = PDFProcessor.extract_text_by_page(file_path)
-        processed_subpages = []
-
-        for page in pages:
-            # Split each page into 5 equal sections
-            num_chars = len(page)
-            section_size = num_chars // 5
-            sections = [page[i:i + section_size] for i in range(0, num_chars, section_size)]
-
-            # Preprocess each section
-            processed_subpages.extend([PDFProcessor.preprocess(section) for section in sections])
-
-        return processed_subpages
-
     @staticmethod
     def extract_text_by_page(file_path):
         """Extracts text content page by page from a PDF file."""
@@ -80,7 +64,7 @@ class Doc2VecProcessor:
     """Handles Doc2Vec related functionalities."""
 
     @staticmethod
-    def train_doc2vec_model(docs, vector_size=50, window=5, min_count=2, workers=4, epochs=50):
+    def train_doc2vec_model(docs, vector_size=35, window=5, min_count=2, workers=4, epochs=50):
         """Train a Doc2Vec model with the provided documents."""
         tagged_data = [TaggedDocument(words=word_tokenize(_d.lower()), tags=[str(i)]) for i, _d in enumerate(docs)]
         model = Doc2Vec(vector_size=vector_size, window=window, min_count=min_count, workers=workers)
