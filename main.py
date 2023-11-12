@@ -19,6 +19,24 @@ from pdfminer.high_level import extract_text
 from gensim.models import Doc2Vec
 from gensim.models.doc2vec import TaggedDocument
 
+from transformers import AutoTokenizer, AutoModel
+import torch
+
+
+class TransformerEmbeddings:
+    def __init__(self, model_name='bert-base-uncased'):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name)
+        self.model.eval()  # Set model to evaluation mode
+
+    def get_embedding(self, text):
+        inputs = self.tokenizer(text, return_tensors="pt",
+                                truncation=True, max_length=512)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        return outputs.last_hidden_state.mean(dim=1).squeeze().numpy()
+
+
 PERCENTAGE_THRESHOLD = 0.1
 TOP_DOCUMENTS = 5
 
@@ -109,7 +127,7 @@ class IndexBuilder:
             TextBlob(page).sentiment.polarity for page in processed_pages]
         return processed_pages, sentiment_scores
 
-    def build(self, directory_path, batch_size=1000):
+    def build(self, directory_path, batch_size=1000, use_transformer=False):
         """Builds the index from a given directory of PDF files page by page."""
         file_paths = glob.glob(os.path.join(directory_path, '*.pdf'))
 
@@ -136,25 +154,30 @@ class IndexBuilder:
         vectorizer = TfidfVectorizer()
         tfidf_matrix = vectorizer.fit_transform(processed_pages)
 
-        data = {
-            'vectorizer': vectorizer,
-            'document_pages': document_pages,
-            'sentiment_scores': sentiment_scores  # Store sentiment scores in the index
-        }
-
-        if self.mode == "lsi":
-            lsi_model = TruncatedSVD(n_components=50)
-            data['lsi_matrix'] = lsi_model.fit_transform(tfidf_matrix)
-            data['lsi_model'] = lsi_model
-        elif self.mode == "doc2vec":
-            d2v_processor = Doc2VecProcessor()
-            self.d2v_model = d2v_processor.train_doc2vec_model(processed_pages)
-            data['d2v_model'] = self.d2v_model
-            data['document_vectors'] = [self.d2v_model.dv[i]
-                                        for i in range(len(processed_pages))]
+        if use_transformer:
+            transformer_processor = TransformerEmbeddings()
+            data['document_vectors'] = [
+                transformer_processor.get_embedding(page) for page in processed_pages]
         else:
-            data['tfidf_matrix'] = tfidf_matrix
+            data = {
+                'vectorizer': vectorizer,
+                'document_pages': document_pages,
+                'sentiment_scores': sentiment_scores  # Store sentiment scores in the index
+            }
 
+            if self.mode == "lsi":
+                lsi_model = TruncatedSVD(n_components=50)
+                data['lsi_matrix'] = lsi_model.fit_transform(tfidf_matrix)
+                data['lsi_model'] = lsi_model
+            elif self.mode == "doc2vec":
+                d2v_processor = Doc2VecProcessor()
+                self.d2v_model = d2v_processor.train_doc2vec_model(
+                    processed_pages)
+                data['d2v_model'] = self.d2v_model
+                data['document_vectors'] = [self.d2v_model.dv[i]
+                                            for i in range(len(processed_pages))]
+            else:
+                data['tfidf_matrix'] = tfidf_matrix
         return data
 
 
@@ -171,7 +194,13 @@ class SearchEngine:
         """Queries the search engine and retrieves relevant pages."""
         preprocessed_query = PDFProcessor.preprocess(text)
 
-        if self.mode == "lsi":
+        if self.mode == "transformer":
+            transformer_processor = TransformerEmbeddings()
+            query_vector = transformer_processor.get_embedding(text)
+            scores = cosine_similarity(
+                [query_vector], self.data['document_vectors'])
+            similarities = scores[0]
+        elif self.mode == "lsi":
             query_vector = self.data['vectorizer'].transform(
                 [preprocessed_query])
             lsi_query_vector = self.data['lsi_model'].transform(query_vector)
@@ -256,9 +285,14 @@ def main():
                         help='Path to the directory containing PDF documents.')
     parser.add_argument('--update-index', action='store_true',
                         help='Update the index if it already exists.')
-    parser.add_argument('--mode', type=str, choices=['tfidf', 'lsi', 'doc2vec'], default='tfidf',
+    parser.add_argument('--mode', type=str, choices=['tfidf', 'lsi', 'doc2vec', 'transformer'], default='tfidf',
                         help='The indexing and search mode.')
     args = parser.parse_args()
+
+    if args.mode == 'transformer':
+        use_transformer = True
+    else:
+        use_transformer = False
 
     # Check if index file exists
     if os.path.exists(args.index) and not args.update_index:
@@ -267,7 +301,7 @@ def main():
     else:
         print("Building new index...")
         indexer = IndexBuilder(args.mode)
-        index_data = indexer.build(args.docs)
+        index_data = indexer.build(args.docs, use_transformer=use_transformer)
         save_index(args.index, index_data)
         print(f"Index saved to {args.index}")
 
