@@ -19,8 +19,17 @@ from pdfminer.high_level import extract_text
 from gensim.models import Doc2Vec
 from gensim.models.doc2vec import TaggedDocument
 
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, pipeline
 import torch
+
+
+class ZeroShotClassifier:
+    def __init__(self, model_name='facebook/bart-large-mnli'):
+        self.classifier = pipeline(
+            "zero-shot-classification", model=model_name)
+
+    def classify(self, text, candidate_labels):
+        return self.classifier(text, candidate_labels)
 
 
 class TransformerEmbeddings:
@@ -64,6 +73,12 @@ class PDFProcessor:
         except Exception as e:
             logging.error(f"Error extracting text from {file_path}: {e}")
         return texts
+
+    @staticmethod
+    def classify_text(text, classifier, labels):
+        """Classify the text into given labels using zero-shot classification."""
+        classification_result = classifier.classify(text, labels)
+        return classification_result['labels'][0]  # Return the top label
 
     @staticmethod
     def preprocess(text):
@@ -127,7 +142,7 @@ class IndexBuilder:
             TextBlob(page).sentiment.polarity for page in processed_pages]
         return processed_pages, sentiment_scores
 
-    def build(self, directory_path, batch_size=1000, use_transformer=False):
+    def build(self, directory_path, batch_size=1000, use_transformer=False, use_zero_shot=False, candidate_labels=None):
         """Builds the index from a given directory of PDF files page by page."""
         file_paths = glob.glob(os.path.join(directory_path, '*.pdf'))
 
@@ -153,6 +168,14 @@ class IndexBuilder:
 
         vectorizer = TfidfVectorizer()
         tfidf_matrix = vectorizer.fit_transform(processed_pages)
+
+        if use_zero_shot:
+            classifier = ZeroShotClassifier()
+            for idx, page in enumerate(processed_pages):
+                label = PDFProcessor.classify_text(
+                    page, classifier, candidate_labels)
+                # Store or use the label as needed, e.g., add to your data dictionary
+                data['labels'][idx] = label
 
         if use_transformer:
             transformer_processor = TransformerEmbeddings()
@@ -198,7 +221,7 @@ class SearchEngine:
             transformer_processor = TransformerEmbeddings()
             query_vector = transformer_processor.get_embedding(text)
             scores = cosine_similarity(
-                [query_vector], self.data['document_vectors'])
+                [query_vector], self.data['document_vectors'])  # Make sure 'document_vectors' are also from transformer
             similarities = scores[0]
         elif self.mode == "lsi":
             query_vector = self.data['vectorizer'].transform(
@@ -246,7 +269,10 @@ class SearchEngine:
         sorted_docs = sorted(normalized_similarity.items(),
                              key=lambda kv: kv[1], reverse=True)
 
-        return paths, scores, sorted_docs[:TOP_DOCUMENTS]
+        # Retrieve the labels for the top results
+        labels = [self.data['labels'][index] for index in top_indices]
+
+        return paths, scores, labels, sorted_docs[:TOP_DOCUMENTS]
 
 
 def save_index(index_file, data):
@@ -301,7 +327,10 @@ def main():
     else:
         print("Building new index...")
         indexer = IndexBuilder(args.mode)
-        index_data = indexer.build(args.docs, use_transformer=use_transformer)
+        candidate_labels = ['label1', 'label2',
+                            'label3']  # Define your labels here
+        index_data = indexer.build(args.docs, use_transformer=use_transformer,
+                                   use_zero_shot=True, candidate_labels=candidate_labels)
         save_index(args.index, index_data)
         print(f"Index saved to {args.index}")
 
@@ -317,15 +346,19 @@ def main():
         if query.strip().lower() == 'exit':
             break
 
-        results, scores, sorted_docs = search_engine.query(query)
-        print("Top pages with highest similarity score:")
-        for i, (path, page) in enumerate(results):
-            print(
-                f"Document: {path}, Page: {page + 1}, Score: {scores[i]:.4f}, Sentiment: {convert_sentiment_to_label(index_data['sentiment_scores'][i])}")
+        results, scores, labels, sorted_docs = search_engine.query(query)
+    print("Top pages with highest similarity score:")
+    for i, ((path, page), label) in enumerate(zip(results, labels)):
+        print(
+            f"Document: {path}, Page: {page + 1}, Score: {scores[i]:.4f}, Label: {label}, Sentiment: {convert_sentiment_to_label(index_data['sentiment_scores'][i])}")
 
-        print("Top 5 relevant documents:")
-        for doc, count in sorted_docs:
-            print(f"Document: {doc}, Cumulative Score: {count}")
+    print("Top 5 relevant documents:")
+    for doc, count in sorted_docs:
+        # Assuming label for the first page represents the document
+        doc_label = index_data['labels'][index_data['document_pages'].index(
+            (doc, 0))]
+        print(
+            f"Document: {doc}, Cumulative Score: {count}, Label: {doc_label}")
 
 
 if __name__ == "__main__":
