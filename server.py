@@ -1,4 +1,5 @@
 from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi.staticfiles import StaticFiles
 import uuid
 import pickle
 import asyncio
@@ -25,6 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/docs", StaticFiles(directory="docs"), name="pdfs")
 
 class PDFFile(BaseModel):
     name: str
@@ -109,7 +111,7 @@ def get_index_status(task_id: str):
     raise HTTPException(status_code=404, detail="Task not found")
 
 
-@app.post("/stop_index/{task_id}")
+@app.post("/stop-index/{task_id}")
 def stop_index(task_id: str):
     task_info = tasks.get(task_id)
     if task_info and task_info["status"] == "in_progress":
