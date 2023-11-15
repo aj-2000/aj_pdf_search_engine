@@ -7,8 +7,9 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
 
-from models import IndexBuildTask
-from main import IndexBuilder
+from models import IndexBuildTask, SearchTask
+from main import IndexBuilder, SearchEngine
+
 origins = [
     "http://localhost:3000",
     "http://localhost:3001",
@@ -47,6 +48,12 @@ def save_index(index_file, data):
     """Save index data to a file."""
     with open(index_file, 'wb') as f:
         pickle.dump(data, f)
+
+
+def load_index(index_file):
+    """Load index data from a file."""
+    with open(index_file, 'rb') as f:
+        return pickle.load(f)
 
 
 class IndexTask:
@@ -114,16 +121,16 @@ class SearchResults(BaseModel):
 # Assuming this function is adapted from your original script
 
 
-def search_index(query: str, index_file: str) -> List[SearchResults]:
-    # Implement the logic to search the index and return results
-    # This function should return a list of SearchResults
-    pass
+def search_index(query: str, index_file: str, mode: str):
+    index_data = load_index(index_file)
+    search_engine = SearchEngine(index_data, mode)
+    return search_engine.query(query)
 
 
 @app.post("/query", response_model=List[SearchResults])
-def query_index(query: str, index_file: str = "index_data.pkl"):
+def query_index(task: SearchTask):
     try:
-        results = search_index(query, index_file)
+        results = search_index(task.query, task.index_file, task.mode)
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
