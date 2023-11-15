@@ -38,7 +38,7 @@ def list_pdfs(docs_path: str = "docs"):
         for file in files:
             if file.lower().endswith('.pdf'):
                 full_path = os.path.join(root, file)
-                pdf_files.append(PDFFile(name=file, path=full_path))
+                pdf_files.append(PDFFile(name=os.path.basename(full_path).split('.')[0], path=full_path))
     return pdf_files
 
 # Mock function to represent index building
@@ -56,6 +56,15 @@ def load_index(index_file):
         return pickle.load(f)
 
 
+def convert_sentiment_to_label(sentiment_score):
+    if sentiment_score > 0.2:
+        return "positive"
+    elif sentiment_score < -0.2:
+        return "negative"
+    else:
+        return "neutral"
+
+
 class IndexTask:
     def __init__(self):
         self._cancel = False
@@ -69,8 +78,7 @@ class IndexTask:
                 indexer = IndexBuilder(task.mode)
                 candidate_labels = ['label1', 'label2',
                                     'label3']  # Define your labels here
-                index_data = indexer.build(task.docs_path, use_transformer=False,
-                                           use_zero_shot=True, candidate_labels=candidate_labels)
+                index_data = indexer.build(task.docs_path)
                 save_index(task.index_file, index_data)
                 print(f"Index saved to {task.index_file}")
         finally:
@@ -93,7 +101,7 @@ async def build_index(taskConfig: IndexBuildTask, background_tasks: BackgroundTa
     return {"task_id": task_id}
 
 
-@app.get("/index_status/{task_id}")
+@app.get("/index-status/{task_id}")
 def get_index_status(task_id: str):
     task_info = tasks.get(task_id)
     if task_info:
@@ -112,22 +120,53 @@ def stop_index(task_id: str):
         status_code=404, detail="Task not found or not in progress")
 
 
-class SearchResults(BaseModel):
+
+class Page(BaseModel):
     path: str
-    page: int
+    document_name: str 
+    page_number: int
     score: float
-    label: Optional[str] = None
+    sentiment: Optional[str] = None
 
-# Assuming this function is adapted from your original script
+class Document(BaseModel):
+    path: str
+    document_name: str
+    cumulative_score: float
 
+class SearchResults(BaseModel):
+    pages: List[Page]
+    docs: List[Document]
 
-def search_index(query: str, index_file: str, mode: str):
+def search_index(query: str, index_file: str, mode: str) -> SearchResults:
     index_data = load_index(index_file)
     search_engine = SearchEngine(index_data, mode)
-    return search_engine.query(query)
+    results, scores, sorted_docs = search_engine.query(query)
+
+    pages = [
+        Page(
+            path=path,
+            page_number=page + 1,
+            score=scores[i],
+            # sentiment=convert_sentiment_to_label(index_data['sentiment_scores'][i]),
+            document_name=os.path.basename(path).split('.')[0]  # Extract the document name
+        )
+        for i, (path, page) in enumerate(results)
+    ]
+
+    docs = [
+        Document(
+            document_name=os.path.basename(doc).split('.')[0],
+            cumulative_score=count,
+            path=doc
+        )
+        for doc, count in sorted_docs
+    ]
+
+    return SearchResults(pages=pages, docs=docs)
 
 
-@app.post("/query", response_model=List[SearchResults])
+
+@app.post("/query", response_model=SearchResults)
 def query_index(task: SearchTask):
     try:
         results = search_index(task.query, task.index_file, task.mode)
