@@ -1,11 +1,14 @@
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 import uuid
+import pickle
 import asyncio
 from typing import List, Optional
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
 
+from models import IndexBuildTask
+from main import IndexBuilder
 origins = [
     "http://localhost:3000",
     "http://localhost:3001",
@@ -40,20 +43,29 @@ def list_pdfs(docs_path: str = "docs"):
 # Mock function to represent index building
 
 
+def save_index(index_file, data):
+    """Save index data to a file."""
+    with open(index_file, 'wb') as f:
+        pickle.dump(data, f)
+
+
 class IndexTask:
     def __init__(self):
         self._cancel = False
 
-    async def run(self, docs_path: str, index_file: str):
+    async def run(self, task: IndexBuildTask):
         try:
-            # Mock index building process
-            for i in range(10):
-                if self._cancel:
-                    print(f"Index building cancelled for {docs_path}.")
-                    return
-                await asyncio.sleep(1)  # Simulating work
-            print(
-                f"Index built for documents in {docs_path} and saved to {index_file}")
+            if os.path.exists(task.index_file) and not task.update_index:
+                pass
+            else:
+                print("Building new index...")
+                indexer = IndexBuilder(task.mode)
+                candidate_labels = ['label1', 'label2',
+                                    'label3']  # Define your labels here
+                index_data = indexer.build(task.docs_path, use_transformer=False,
+                                           use_zero_shot=True, candidate_labels=candidate_labels)
+                save_index(task.index_file, index_data)
+                print(f"Index saved to {task.index_file}")
         finally:
             self._cancel = False
 
@@ -65,12 +77,12 @@ class IndexTask:
 tasks = {}
 
 
-@app.post("/build_index")
-async def build_index(background_tasks: BackgroundTasks, docs_path: str = "docs", index_file: str = "index_data.pkl"):
+@app.post("/build-index")
+async def build_index(taskConfig: IndexBuildTask, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
     task = IndexTask()
     tasks[task_id] = {"task": task, "status": "in_progress"}
-    background_tasks.add_task(task.run, docs_path, index_file)
+    background_tasks.add_task(task.run, taskConfig)
     return {"task_id": task_id}
 
 
