@@ -2,11 +2,11 @@ from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.staticfiles import StaticFiles
 import uuid
 import pickle
-import asyncio
 from typing import List, Optional
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import time
 
 from models import IndexBuildTask, SearchTask
 from main import IndexBuilder, SearchEngine
@@ -36,7 +36,7 @@ class PDFFile(BaseModel):
 @app.get("/list-pdfs", response_model=List[PDFFile])
 def list_pdfs(docs_path: str = "docs"):
     pdf_files = []
-    for root, dirs, files in os.walk(docs_path):
+    for root, _, files in os.walk(docs_path):
         for file in files:
             if file.lower().endswith('.pdf'):
                 full_path = os.path.join(root, file)
@@ -138,8 +138,10 @@ class Document(BaseModel):
 class SearchResults(BaseModel):
     pages: List[Page]
     docs: List[Document]
+    query_time: float
 
 def search_index(query: str, index_file: str, mode: str) -> SearchResults:
+    start = time.time()
     index_data = load_index(index_file)
     search_engine = SearchEngine(index_data, mode)
     results, scores, sorted_docs = search_engine.query(query)
@@ -163,8 +165,8 @@ def search_index(query: str, index_file: str, mode: str) -> SearchResults:
         )
         for doc, count in sorted_docs
     ]
-
-    return SearchResults(pages=pages, docs=docs)
+    end = time.time()
+    return SearchResults(pages=pages, docs=docs, query_time=(end-start) * 10**3)
 
 
 
@@ -174,4 +176,5 @@ def query_index(task: SearchTask):
         results = search_index(task.query, task.index_file, task.mode)
         return results
     except Exception as e:
+        print("Error: " + str(e))
         raise HTTPException(status_code=500, detail=str(e))
