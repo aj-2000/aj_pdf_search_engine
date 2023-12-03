@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import time
+from uuid import uuid4
 
 from models import IndexBuildTask, SearchTask
 from main import IndexBuilder, SearchEngine
@@ -66,41 +67,45 @@ def convert_sentiment_to_label(sentiment_score):
     else:
         return "neutral"
 
+# Dictionary to keep track of tasks
+tasks = {}
 
 class IndexTask:
     def __init__(self):
         self._cancel = False
 
-    async def run(self, task: IndexBuildTask):
+    async def run(self, taskConfig):
+        task = taskConfig["taskData"]
+        task_id = taskConfig["task_id"]
+        index_file = task.index_file.split(".")[0]
+        index_file = f"{index_file}.{task.mode}.pkl"
+
         try:
-            if os.path.exists(task.index_file) and not task.update_index:
+            if os.path.exists(index_file) and not task.update_index:
                 pass
             else:
                 print("Building new index...")
                 indexer = IndexBuilder(task.mode)
-                candidate_labels = ['label1', 'label2',
-                                    'label3']  # Define your labels here
                 index_data = indexer.build(task.docs_path)
-                save_index(task.index_file, index_data)
+                save_index(index_file, index_data)
+                tasks[task_id]["status"] = "success"  # Fix: Update task status to "success"
                 print(f"Index saved to {task.index_file}")
         finally:
             self._cancel = False
 
-    def cancel(self):
-        self._cancel = True
-
-
-# Dictionary to keep track of tasks
-tasks = {}
-
 
 @app.post("/build-index")
-async def build_index(taskConfig: IndexBuildTask, background_tasks: BackgroundTasks):
+async def build_index(taskData: IndexBuildTask, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
     task = IndexTask()
+    taskConfig = {
+        "taskData": taskData,
+        "task_id": task_id,
+    }
     tasks[task_id] = {"task": task, "status": "in_progress"}
     background_tasks.add_task(task.run, taskConfig)
-    return {"task_id": task_id}
+    
+    return {"task_id": task_id, "status": "in_progress"}
 
 
 @app.get("/index-status/{task_id}")
@@ -139,9 +144,13 @@ class SearchResults(BaseModel):
     pages: List[Page]
     docs: List[Document]
     query_time: float
+    query_id: str
+    query: str
+    mode: str
 
 def search_index(query: str, index_file: str, mode: str) -> SearchResults:
     start = time.time()
+    index_file = f"{index_file}.{mode}.pkl"
     index_data = load_index(index_file)
     search_engine = SearchEngine(index_data, mode)
     results, scores, sorted_docs = search_engine.query(query)
@@ -166,15 +175,51 @@ def search_index(query: str, index_file: str, mode: str) -> SearchResults:
         for doc, count in sorted_docs
     ]
     end = time.time()
-    return SearchResults(pages=pages, docs=docs, query_time=(end-start) * 10**3)
+
+    return SearchResults(pages=pages, docs=docs, query_time=(end-start) * 10**3, query_id=str(uuid4()), query=query, mode=mode)
 
 
 
 @app.post("/query", response_model=SearchResults)
 def query_index(task: SearchTask):
+    print(task)
     try:
         results = search_index(task.query, task.index_file, task.mode)
         return results
     except Exception as e:
         print("Error: " + str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+valid_modes = {"tfidf", "doc2vec", "lsi"}
+
+def parse_filename(pkl_file):
+    parts = pkl_file.split('.')
+    
+    if len(parts) != 3:
+        return None
+
+    name, mode, _ = parts
+
+    if mode not in valid_modes:
+        return None
+
+    return {"name": name, "mode": mode}
+
+def get_valid_index_files():
+    valid_files = []
+    root_dir = os.path.dirname(os.path.realpath(__file__))
+
+    files = os.listdir(root_dir)
+    print(root_dir, files)
+    for filename in files:
+        file_path = os.path.join(root_dir, filename)
+        if os.path.isfile(file_path) and file_path.lower().endswith('.pkl'):
+            result = parse_filename(file_path.split('/')[-1])
+            if result:
+                valid_files.append(result)
+
+    return valid_files
+
+@app.get("/get-index-list")
+def get_indexes():
+    return get_valid_index_files()
