@@ -1,3 +1,5 @@
+from main import IndexBuilder, SearchEngine
+from models import IndexBuildTask, SearchTask
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.staticfiles import StaticFiles
 import uuid
@@ -8,9 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import time
 from uuid import uuid4
-
-from models import IndexBuildTask, SearchTask
-from main import IndexBuilder, SearchEngine
+import nltk
+nltk.download('punkt')
+nltk.download('stopwords')
+nltk.download('corpus')
 
 app = FastAPI()
 
@@ -24,6 +27,7 @@ app.add_middleware(
 
 app.mount("/docs", StaticFiles(directory="docs"), name="pdfs")
 
+
 class PDFFile(BaseModel):
     name: str
     path: str
@@ -36,9 +40,9 @@ def list_pdfs(docs_path: str = "docs"):
         for file in files:
             if file.lower().endswith('.pdf'):
                 full_path = os.path.join(root, file)
-                pdf_files.append(PDFFile(name=os.path.basename(full_path).split('.')[0], path=full_path))
+                pdf_files.append(PDFFile(name=os.path.basename(
+                    full_path).split('.')[0], path=full_path))
     return pdf_files
-
 
 
 def save_index(index_file, data):
@@ -59,8 +63,10 @@ def convert_sentiment_to_label(sentiment_score):
     else:
         return "neutral"
 
+
 # Dictionary to keep track of tasks
 tasks = {}
+
 
 class IndexTask:
     def __init__(self):
@@ -80,7 +86,8 @@ class IndexTask:
                 indexer = IndexBuilder(task.mode)
                 index_data = indexer.build(task.docs_path)
                 save_index(index_file, index_data)
-                tasks[task_id]["status"] = "success"  # Fix: Update task status to "success"
+                # Fix: Update task status to "success"
+                tasks[task_id]["status"] = "success"
                 print(f"Index saved to {task.index_file}")
         finally:
             self._cancel = False
@@ -96,7 +103,7 @@ def build_index(taskData: IndexBuildTask, background_tasks: BackgroundTasks):
     }
     tasks[task_id] = {"task": task, "status": "in_progress"}
     background_tasks.add_task(task.run, taskConfig)
-    
+
     return {"task_id": task_id, "status": "in_progress"}
 
 
@@ -119,19 +126,20 @@ def stop_index(task_id: str):
         status_code=404, detail="Task not found or not in progress")
 
 
-
 class Page(BaseModel):
     path: str
-    document_name: str 
+    document_name: str
     page_number: int
     score: float
     sentiment: float
+
 
 class Document(BaseModel):
     path: str
     document_name: str
     sentiment: float
     cumulative_score: float
+
 
 class SearchResults(BaseModel):
     pages: List[Page]
@@ -141,6 +149,7 @@ class SearchResults(BaseModel):
     query: str
     mode: str
     index: str
+
 
 def search_index(query: str, index: str, mode: str) -> SearchResults:
     start = time.time()
@@ -155,7 +164,8 @@ def search_index(query: str, index: str, mode: str) -> SearchResults:
             page_number=page + 1,
             score=scores[i],
             sentiment=sentiment,
-            document_name=os.path.basename(path).split('.')[0]  # Extract the document name
+            document_name=os.path.basename(path).split(
+                '.')[0]  # Extract the document name
         )
         for i, (path, page, sentiment) in enumerate(paths)
     ]
@@ -174,7 +184,6 @@ def search_index(query: str, index: str, mode: str) -> SearchResults:
     return SearchResults(pages=pages, docs=docs, query_time=(end-start) * 10**3, query_id=str(uuid4()), query=query, mode=mode, index=index)
 
 
-
 @app.post("/query", response_model=SearchResults)
 def query_index(task: SearchTask):
     try:
@@ -184,11 +193,13 @@ def query_index(task: SearchTask):
         print("Error: " + str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
+
 valid_modes = {"tfidf", "doc2vec", "lsi"}
+
 
 def parse_filename(pkl_file):
     parts = pkl_file.split('.')
-    
+
     if len(parts) != 3:
         return None
 
@@ -198,6 +209,7 @@ def parse_filename(pkl_file):
         return None
 
     return {"name": name, "mode": mode}
+
 
 def get_valid_index_files():
     valid_files = []
@@ -213,6 +225,7 @@ def get_valid_index_files():
                 valid_files.append(result)
 
     return valid_files
+
 
 @app.get("/get-index-list")
 def get_indexes():
