@@ -1,8 +1,8 @@
+fastapi==0.104.1
+gensim==4.3.1
 nltk==3.8.1
-PyPDF2==3.0.1
-scikit-learn==1.2.2
-sklearn==0.0
+pdfminer.six==20221105
+pydantic==2.5.2
+scikit_learn==1.2.2
+textblob==0.17.1
 tqdm==4.65.0
-transformers
-torch
-
