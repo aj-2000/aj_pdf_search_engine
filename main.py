@@ -21,6 +21,7 @@ from gensim.models.doc2vec import TaggedDocument
 PERCENTAGE_THRESHOLD = 0.1
 TOP_DOCUMENTS = 5
 
+
 class PDFProcessor:
 
     """Handles PDF extraction and text preprocessing."""
@@ -39,12 +40,14 @@ class PDFProcessor:
     @staticmethod
     def preprocess(text):
         """Preprocesses a given text."""
-        tokens = [token.lower() for token in word_tokenize(text) if token.isalpha()]
+        tokens = [token.lower()
+                  for token in word_tokenize(text) if token.isalpha()]
         stop_words = set(stopwords.words('english'))
         tokens = [token for token in tokens if token not in stop_words]
         lemmatizer = WordNetLemmatizer()
         pos_tags = nltk.pos_tag(tokens)
-        tokens = [lemmatizer.lemmatize(token, PDFProcessor._get_wordnet_pos(pos_tag)) for token, pos_tag in pos_tags]
+        tokens = [lemmatizer.lemmatize(token, PDFProcessor._get_wordnet_pos(
+            pos_tag)) for token, pos_tag in pos_tags]
         return ' '.join(tokens)
 
     @staticmethod
@@ -63,12 +66,15 @@ class Doc2VecProcessor:
     """Handles Doc2Vec related functionalities."""
 
     @staticmethod
-    def train_doc2vec_model(docs, vector_size=35, window=5, min_count=2, workers=4, epochs=50):
+    def train_doc2vec_model(docs, vector_size=150, window=5, min_count=2, workers=4, epochs=50):
         """Train a Doc2Vec model with the provided documents."""
-        tagged_data = [TaggedDocument(words=word_tokenize(_d.lower()), tags=[str(i)]) for i, _d in enumerate(docs)]
-        model = Doc2Vec(vector_size=vector_size, window=window, min_count=min_count, workers=workers)
+        tagged_data = [TaggedDocument(words=word_tokenize(_d.lower()), tags=[
+                                      str(i)]) for i, _d in enumerate(docs)]
+        model = Doc2Vec(vector_size=vector_size, window=window,
+                        min_count=min_count, workers=workers)
         model.build_vocab(tagged_data)
-        model.train(tagged_data, total_examples=model.corpus_count, epochs=epochs)
+        model.train(tagged_data, total_examples=model.corpus_count,
+                    epochs=epochs)
         return model
 
     @staticmethod
@@ -91,7 +97,8 @@ class IndexBuilder:
         for page_idx, page_text in enumerate(pages):
             processed_page = PDFProcessor.preprocess(page_text)
             sentiment = TextBlob(page_text).sentiment.polarity
-            processed_data.append({'text': processed_page, 'sentiment': sentiment})
+            processed_data.append(
+                {'text': processed_page, 'sentiment': sentiment})
 
         return processed_data
 
@@ -108,13 +115,15 @@ class IndexBuilder:
             batch_paths = file_paths[i: i + batch_size]
             with Pool(cpu_count()) as pool:
                 # Process a batch of files in parallel and extract text by pages
-                processed_pages_data = list(tqdm(pool.imap(self._process_file, batch_paths), total=len(batch_paths)))
+                processed_pages_data = list(
+                    tqdm(pool.imap(self._process_file, batch_paths), total=len(batch_paths)))
 
             # Update the lists with processed data from the current batch
             for file_idx, data in enumerate(processed_pages_data):
                 for page_idx, processed_page_data in enumerate(data):
                     processed_pages.append(processed_page_data['text'])
-                    document_pages.append((batch_paths[file_idx], page_idx, processed_page_data['sentiment']))
+                    document_pages.append(
+                        (batch_paths[file_idx], page_idx, processed_page_data['sentiment']))
 
         vectorizer = TfidfVectorizer()
         tfidf_matrix = vectorizer.fit_transform(processed_pages)
@@ -132,7 +141,8 @@ class IndexBuilder:
             d2v_processor = Doc2VecProcessor()
             self.d2v_model = d2v_processor.train_doc2vec_model(processed_pages)
             data['d2v_model'] = self.d2v_model
-            data['document_vectors'] = [self.d2v_model.dv[i] for i in range(len(processed_pages))]
+            data['document_vectors'] = [self.d2v_model.dv[i]
+                                        for i in range(len(processed_pages))]
         else:
             data['tfidf_matrix'] = tfidf_matrix
 
@@ -153,22 +163,29 @@ class SearchEngine:
         preprocessed_query = PDFProcessor.preprocess(text)
 
         if self.mode == "lsi":
-            query_vector = self.data['vectorizer'].transform([preprocessed_query])
+            query_vector = self.data['vectorizer'].transform(
+                [preprocessed_query])
             lsi_query_vector = self.data['lsi_model'].transform(query_vector)
-            similarities = cosine_similarity(self.data['lsi_matrix'], lsi_query_vector).flatten()
+            similarities = cosine_similarity(
+                self.data['lsi_matrix'], lsi_query_vector).flatten()
         elif self.mode == "doc2vec":
-            query_vector = Doc2VecProcessor.infer_vector(self.d2v_model, preprocessed_query)
-            scores = cosine_similarity([query_vector], self.data['document_vectors'])
+            query_vector = Doc2VecProcessor.infer_vector(
+                self.d2v_model, preprocessed_query)
+            scores = cosine_similarity(
+                [query_vector], self.data['document_vectors'])
             similarities = scores[0]
         else:
-            query_vector = self.data['vectorizer'].transform([preprocessed_query])
-            similarities = cosine_similarity(self.data['tfidf_matrix'], query_vector).flatten()
+            query_vector = self.data['vectorizer'].transform(
+                [preprocessed_query])
+            similarities = cosine_similarity(
+                self.data['tfidf_matrix'], query_vector).flatten()
 
         top_indices = similarities.argsort()[:-top_k - 1:-1]
         scores = similarities[top_indices]
-       
+
         paths = [
-            (self.data['document_pages'][index][0], self.data['document_pages'][index][1], self.data['document_pages'][index][2])
+            (self.data['document_pages'][index][0], self.data['document_pages']
+             [index][1], self.data['document_pages'][index][2])
             for index in top_indices
         ]
 
@@ -182,7 +199,8 @@ class SearchEngine:
         for index in similarities.argsort()[:-int(PERCENTAGE_THRESHOLD * len(similarities)) - 1:-1]:
             doc_path, page, sentiment = self.data['document_pages'][index]
             # Aggregate the similarity score for the document
-            doc_similarity_aggregate[doc_path] = doc_similarity_aggregate.get(doc_path, {'score': 0, 'sentiment_sum': 0})
+            doc_similarity_aggregate[doc_path] = doc_similarity_aggregate.get(
+                doc_path, {'score': 0, 'sentiment_sum': 0})
             doc_similarity_aggregate[doc_path]['score'] += similarities[index]
             doc_similarity_aggregate[doc_path]['sentiment_sum'] += sentiment
 
@@ -195,10 +213,10 @@ class SearchEngine:
             }
 
         # Sort documents by normalized similarity
-        sorted_docs = sorted(normalized_similarity.items(), key=lambda kv: kv[1]['score'], reverse=True)
+        sorted_docs = sorted(normalized_similarity.items(),
+                             key=lambda kv: kv[1]['score'], reverse=True)
 
         return paths, scores, sorted_docs[:TOP_DOCUMENTS]
-
 
 
 def save_index(index_file, data):
@@ -227,11 +245,16 @@ def get_multiline_input(prompt, end_keyword="END"):
             break
     return '\n'.join(lines)
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Build an index and search PDFs.")
-    parser.add_argument('--index', type=str, default='index_data.pkl', help='Path to the index file.')
-    parser.add_argument('--docs', type=str, default='docs', help='Path to the directory containing PDF documents.')
-    parser.add_argument('--update-index', action='store_true', help='Update the index if it already exists.')
+    parser = argparse.ArgumentParser(
+        description="Build an index and search PDFs.")
+    parser.add_argument(
+        '--index', type=str, default='index_data.pkl', help='Path to the index file.')
+    parser.add_argument('--docs', type=str, default='docs',
+                        help='Path to the directory containing PDF documents.')
+    parser.add_argument('--update-index', action='store_true',
+                        help='Update the index if it already exists.')
     parser.add_argument('--mode', type=str, choices=['tfidf', 'lsi', 'doc2vec'], default='tfidf',
                         help='The indexing and search mode.')
     args = parser.parse_args()
@@ -267,6 +290,7 @@ def main():
         # print("Top 5 relevant documents:")
         # for doc, count in sorted_docs:
         #     print(f"Document: {doc}, Cumulative Score: {count}")
+
 
 if __name__ == "__main__":
     main()
