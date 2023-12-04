@@ -6,3 +6,4 @@ pydantic==2.5.2
 scikit_learn==1.2.2
 textblob==0.17.1
 tqdm==4.65.0
+uvicorn
