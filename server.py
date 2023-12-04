@@ -44,17 +44,14 @@ def list_pdfs(docs_path: str = "docs"):
                 pdf_files.append(PDFFile(name=os.path.basename(full_path).split('.')[0], path=full_path))
     return pdf_files
 
-# Mock function to represent index building
 
 
 def save_index(index_file, data):
-    """Save index data to a file."""
     with open(index_file, 'wb') as f:
         pickle.dump(data, f)
 
 
 def load_index(index_file):
-    """Load index data from a file."""
     with open(index_file, 'rb') as f:
         return pickle.load(f)
 
@@ -95,7 +92,7 @@ class IndexTask:
 
 
 @app.post("/build-index")
-async def build_index(taskData: IndexBuildTask, background_tasks: BackgroundTasks):
+def build_index(taskData: IndexBuildTask, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
     task = IndexTask()
     taskConfig = {
@@ -133,11 +130,12 @@ class Page(BaseModel):
     document_name: str 
     page_number: int
     score: float
-    sentiment: Optional[str] = None
+    sentiment: float
 
 class Document(BaseModel):
     path: str
     document_name: str
+    sentiment: float
     cumulative_score: float
 
 class SearchResults(BaseModel):
@@ -147,42 +145,43 @@ class SearchResults(BaseModel):
     query_id: str
     query: str
     mode: str
+    index: str
 
-def search_index(query: str, index_file: str, mode: str) -> SearchResults:
+def search_index(query: str, index: str, mode: str) -> SearchResults:
     start = time.time()
-    index_file = f"{index_file}.{mode}.pkl"
+    index_file = f"{index}.{mode}.pkl"
     index_data = load_index(index_file)
     search_engine = SearchEngine(index_data, mode)
-    results, scores, sorted_docs = search_engine.query(query)
+    paths, scores, sorted_docs = search_engine.query(query)
 
     pages = [
         Page(
             path=path,
             page_number=page + 1,
             score=scores[i],
-            # sentiment=convert_sentiment_to_label(index_data['sentiment_scores'][i]),
+            sentiment=sentiment,
             document_name=os.path.basename(path).split('.')[0]  # Extract the document name
         )
-        for i, (path, page) in enumerate(results)
+        for i, (path, page, sentiment) in enumerate(paths)
     ]
 
     docs = [
         Document(
             document_name=os.path.basename(doc).split('.')[0],
-            cumulative_score=count,
+            cumulative_score=detail['score'],
+            sentiment=detail['average_sentiment'],
             path=doc
         )
-        for doc, count in sorted_docs
+        for doc, detail in sorted_docs
     ]
     end = time.time()
 
-    return SearchResults(pages=pages, docs=docs, query_time=(end-start) * 10**3, query_id=str(uuid4()), query=query, mode=mode)
+    return SearchResults(pages=pages, docs=docs, query_time=(end-start) * 10**3, query_id=str(uuid4()), query=query, mode=mode, index=index)
 
 
 
 @app.post("/query", response_model=SearchResults)
 def query_index(task: SearchTask):
-    print(task)
     try:
         results = search_index(task.query, task.index_file, task.mode)
         return results
@@ -210,7 +209,7 @@ def get_valid_index_files():
     root_dir = os.path.dirname(os.path.realpath(__file__))
 
     files = os.listdir(root_dir)
-    print(root_dir, files)
+    (root_dir, files)
     for filename in files:
         file_path = os.path.join(root_dir, filename)
         if os.path.isfile(file_path) and file_path.lower().endswith('.pkl'):

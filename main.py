@@ -12,7 +12,7 @@ from nltk.corpus import stopwords, wordnet
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from multiprocessing import Pool, cpu_count
-
+from textblob import TextBlob
 import logging
 from pdfminer.high_level import extract_text
 
@@ -87,7 +87,14 @@ class IndexBuilder:
     def _process_file(self, file_path):
         """Process a single file by extracting and preprocessing its text page by page."""
         pages = PDFProcessor.extract_text_by_page(file_path)
-        return [PDFProcessor.preprocess(page) for page in pages]
+        processed_data = []
+
+        for page_idx, page_text in enumerate(pages):
+            processed_page = PDFProcessor.preprocess(page_text)
+            sentiment = TextBlob(page_text).sentiment.polarity
+            processed_data.append({'text': processed_page, 'sentiment': sentiment})
+
+        return processed_data
 
     def build(self, directory_path, batch_size=1000):
         """Builds the index from a given directory of PDF files page by page."""
@@ -105,9 +112,10 @@ class IndexBuilder:
                 processed_pages_data = list(tqdm(pool.imap(self._process_file, batch_paths), total=len(batch_paths)))
 
             # Update the lists with processed data from the current batch
-            processed_pages.extend([page for doc in processed_pages_data for page in doc])
-            document_pages.extend(
-                [(fp, idx) for fp, doc in zip(batch_paths, processed_pages_data) for idx in range(len(doc))])
+            for file_idx, data in enumerate(processed_pages_data):
+                for page_idx, processed_page_data in enumerate(data):
+                    processed_pages.append(processed_page_data['text'])
+                    document_pages.append((batch_paths[file_idx], page_idx, processed_page_data['sentiment']))
 
         vectorizer = TfidfVectorizer()
         tfidf_matrix = vectorizer.fit_transform(processed_pages)
@@ -159,29 +167,39 @@ class SearchEngine:
 
         top_indices = similarities.argsort()[:-top_k - 1:-1]
         scores = similarities[top_indices]
-        paths = [(self.data['document_pages'][index][0], self.data['document_pages'][index][1]) for index in top_indices]
+       
+        paths = [
+            (self.data['document_pages'][index][0], self.data['document_pages'][index][1], self.data['document_pages'][index][2])
+            for index in top_indices
+        ]
 
         # Calculate total number of pages for each document
         total_pages_per_doc = {}
-        for doc, page in self.data['document_pages']:
+        for doc, page, sentiment in self.data['document_pages']:
             total_pages_per_doc[doc] = total_pages_per_doc.get(doc, 0) + 1
 
-        # Aggregate the similarity scores for each document
+        # Aggregate the similarity scores and sentiments for each document
         doc_similarity_aggregate = {}
         for index in similarities.argsort()[:-int(PERCENTAGE_THRESHOLD * len(similarities)) - 1:-1]:
-            doc_path = self.data['document_pages'][index][0]
+            doc_path, page, sentiment = self.data['document_pages'][index]
             # Aggregate the similarity score for the document
-            doc_similarity_aggregate[doc_path] = doc_similarity_aggregate.get(doc_path, 0) + similarities[index]
+            doc_similarity_aggregate[doc_path] = doc_similarity_aggregate.get(doc_path, {'score': 0, 'sentiment_sum': 0})
+            doc_similarity_aggregate[doc_path]['score'] += similarities[index]
+            doc_similarity_aggregate[doc_path]['sentiment_sum'] += sentiment
 
         # Normalize the similarity score aggregate by total number of pages
         normalized_similarity = {}
-        for doc, aggregate_score in doc_similarity_aggregate.items():
-            normalized_similarity[doc] = aggregate_score / total_pages_per_doc[doc]
+        for doc, aggregate_data in doc_similarity_aggregate.items():
+            normalized_similarity[doc] = {
+                'score': aggregate_data['score'] / total_pages_per_doc[doc],
+                'average_sentiment': aggregate_data['sentiment_sum'] / total_pages_per_doc[doc]
+            }
 
         # Sort documents by normalized similarity
-        sorted_docs = sorted(normalized_similarity.items(), key=lambda kv: kv[1], reverse=True)
+        sorted_docs = sorted(normalized_similarity.items(), key=lambda kv: kv[1]['score'], reverse=True)
 
         return paths, scores, sorted_docs[:TOP_DOCUMENTS]
+
 
 
 def save_index(index_file, data):
@@ -242,14 +260,14 @@ def main():
         if query.strip().lower() == 'exit':
             break
 
-        results, scores, sorted_docs = search_engine.query(query)
-        print("Top pages with highest similarity score:")
-        for i, (path, page) in enumerate(results):
-            print(f"Document: {path}, Page: {page + 1}, Score: {scores[i]:.4f}")
+        paths, scores, sorted_docs = search_engine.query(query)
+        # print("Top pages with highest similarity score:")
+        # for i, (path, page, sentiment) in enumerate(paths):
+        #     print(f"Document: {path}, Page: {page + 1}, Score: {scores[i]['score']:.4f}, Sentiment: {sentiment}")
 
-        print("Top 5 relevant documents:")
-        for doc, count in sorted_docs:
-            print(f"Document: {doc}, Cumulative Score: {count}")
+        # print("Top 5 relevant documents:")
+        # for doc, count in sorted_docs:
+        #     print(f"Document: {doc}, Cumulative Score: {count}")
 
 if __name__ == "__main__":
     main()
