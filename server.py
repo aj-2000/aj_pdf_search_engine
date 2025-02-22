@@ -11,9 +11,6 @@ import os
 import time
 from uuid import uuid4
 import nltk
-nltk.download('punkt')
-nltk.download('stopwords')
-nltk.download('corpus')
 
 app = FastAPI()
 
