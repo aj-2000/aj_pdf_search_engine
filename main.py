@@ -18,6 +18,11 @@ from pdfminer.high_level import extract_text
 from gensim.models import Doc2Vec
 from gensim.models.doc2vec import TaggedDocument
 
+nltk.download('punkt')
+nltk.download('stopwords')
+nltk.download('averaged_perceptron_tagger')
+nltk.download('wordnet')
+
 PERCENTAGE_THRESHOLD = 0.1
 TOP_DOCUMENTS = 5
 

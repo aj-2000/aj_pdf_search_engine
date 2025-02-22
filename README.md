@@ -12,7 +12,7 @@ Make sure you have the following dependencies installed:
 
 You can install the required packages by running the following command:
 ```commandline
-pip install PyPDF2 nltk scikit-learn tqdm
+pip install -r requirements.txt
 ```
 
 ## Usage
@@ -22,7 +22,7 @@ The search engine will extract text from the PDFs for indexing and searching.
 ### 2. Indexing
 To build the TF-IDF index for the PDF documents, run the following command:
 ```commandline
-python pdf_search.py --docs <path_to_docs_directory> --index <index_filename.pkl> --update-index
+python main.py --docs <path_to_docs_directory> --index <index_filename.pkl> --update-index
 ```
 - `<path_to_docs_directory>`: Path to the directory containing the PDF documents.
 - `<index_filename.pkl>`: Name of the index file to be created or updated.
